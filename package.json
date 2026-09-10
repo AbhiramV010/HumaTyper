@@ -28,8 +28,8 @@
     "typescript": "^7.0.2"
   },
   "build": {
-    "appId": "com.autotyper.app",
-    "productName": "AutoTyper",
+    "appId": "com.humatyper.app",
+    "productName": "HumaTyper",
     "files": [
       "main.js",
       "preload.js",

@@ -1,13 +1,13 @@
-// AutoTyper installer.
+// HumaTyper installer.
 //
 // Clones the repo, builds it (git + npm on PATH), installs to Program Files.
 // The same binary uninstalls itself when invoked with /uninstall.
 //
 // Build (MSVC, from a "x64 Native Tools" prompt):
-//   cl /EHsc /std:c++17 /DUNICODE /D_UNICODE main.cpp /link shell32.lib ole32.lib advapi32.lib uuid.lib /out:AutoTyperInstaller.exe
+//   cl /EHsc /std:c++17 /DUNICODE /D_UNICODE main.cpp /link shell32.lib ole32.lib advapi32.lib uuid.lib user32.lib /out:HumaTyperInstaller.exe
 //
 // Build (MinGW-w64):
-//   g++ -std=c++17 -municode -DUNICODE -D_UNICODE main.cpp -o AutoTyperInstaller.exe -lshell32 -lole32 -ladvapi32 -luuid
+//   g++ -std=c++17 -municode -DUNICODE -D_UNICODE main.cpp -o HumaTyperInstaller.exe -lshell32 -lole32 -ladvapi32 -luuid -luser32
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -20,26 +20,30 @@
 #include <knownfolders.h>
 
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 #include <iostream>
 #include <cstdint>
+#include <algorithm>
+#include <cwctype>
 
 #ifdef _MSC_VER
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "uuid.lib")
+#pragma comment(lib, "user32.lib")
 #endif
 
 namespace fs = std::filesystem;
 
 static const wchar_t* kRepoUrl = L"https://github.com/AbhiramV010/AutoTyper.git";
-static const wchar_t* kAppName = L"AutoTyper";
-static const wchar_t* kRegistryKey = L"AutoTyper";
+static const wchar_t* kAppName = L"HumaTyper";
+static const wchar_t* kRegistryKey = L"HumaTyper";
 static const wchar_t* kPublisher = L"Abhiram Vadali";
 static const wchar_t* kAppVersion = L"1.0.0";
-static const wchar_t* kUninstallerName = L"Uninstall AutoTyper.exe";
+static const wchar_t* kUninstallerName = L"Uninstall HumaTyper.exe";
 
 // ---------- small utilities ----------
 
@@ -222,6 +226,131 @@ static void DeleteUninstallRegistryKey() {
     RegDeleteKeyExW(HKEY_LOCAL_MACHINE, UninstallSubKey().c_str(), KEY_WOW64_64KEY, 0);
 }
 
+// ---------- PATH / launcher command ----------
+
+static const wchar_t* kEnvironmentKey = L"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment";
+static const wchar_t* kLauncherName = L"humatype.cmd";
+
+static std::wstring ReadSystemPath() {
+    HKEY key;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, kEnvironmentKey, 0, KEY_READ, &key) != ERROR_SUCCESS) {
+        return L"";
+    }
+    DWORD type = 0, size = 0;
+    RegQueryValueExW(key, L"Path", nullptr, &type, nullptr, &size);
+    std::wstring value;
+    if (size > 0) {
+        value.resize(size / sizeof(wchar_t));
+        RegQueryValueExW(key, L"Path", nullptr, &type, reinterpret_cast<BYTE*>(value.data()), &size);
+        while (!value.empty() && value.back() == L'\0') value.pop_back();
+    }
+    RegCloseKey(key);
+    return value;
+}
+
+static void WriteSystemPath(const std::wstring& path) {
+    HKEY key;
+    if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, kEnvironmentKey, 0, nullptr, 0,
+                         KEY_WRITE, nullptr, &key, nullptr) != ERROR_SUCCESS) {
+        Log(L"Warning: could not update system PATH.");
+        return;
+    }
+    RegSetValueExW(key, L"Path", 0, REG_EXPAND_SZ,
+                   reinterpret_cast<const BYTE*>(path.c_str()),
+                   static_cast<DWORD>((path.size() + 1) * sizeof(wchar_t)));
+    RegCloseKey(key);
+}
+
+static void BroadcastEnvironmentChange() {
+    DWORD_PTR result = 0;
+    SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0,
+                         reinterpret_cast<LPARAM>(L"Environment"),
+                         SMTO_ABORTIFHUNG, 5000, &result);
+}
+
+static bool PathContainsDir(const std::wstring& path, const std::wstring& dir) {
+    std::wstring pathLower = path, dirLower = dir;
+    std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(), ::towlower);
+    std::transform(dirLower.begin(), dirLower.end(), dirLower.begin(), ::towlower);
+    size_t pos = 0;
+    while (true) {
+        size_t found = pathLower.find(dirLower, pos);
+        if (found == std::wstring::npos) return false;
+        bool startOk = (found == 0) || (pathLower[found - 1] == L';');
+        size_t end = found + dirLower.size();
+        bool endOk = (end == pathLower.size()) || (pathLower[end] == L';');
+        if (startOk && endOk) return true;
+        pos = found + 1;
+    }
+}
+
+static void AddInstallDirToPath(const std::wstring& installDir) {
+    std::wstring path = ReadSystemPath();
+    if (PathContainsDir(path, installDir)) return;
+    std::wstring newPath = path;
+    if (!newPath.empty() && newPath.back() != L';') newPath += L';';
+    newPath += installDir;
+    WriteSystemPath(newPath);
+    BroadcastEnvironmentChange();
+}
+
+static void RemoveInstallDirFromPath(const std::wstring& installDir) {
+    std::wstring path = ReadSystemPath();
+    std::wstring installDirLower = installDir;
+    std::transform(installDirLower.begin(), installDirLower.end(), installDirLower.begin(), ::towlower);
+
+    std::vector<std::wstring> parts;
+    size_t start = 0;
+    while (start <= path.size()) {
+        size_t sep = path.find(L';', start);
+        std::wstring part = (sep == std::wstring::npos) ? path.substr(start) : path.substr(start, sep - start);
+        std::wstring partLower = part;
+        std::transform(partLower.begin(), partLower.end(), partLower.begin(), ::towlower);
+        if (!part.empty() && partLower != installDirLower) parts.push_back(part);
+        if (sep == std::wstring::npos) break;
+        start = sep + 1;
+    }
+
+    std::wstring newPath;
+    for (size_t i = 0; i < parts.size(); ++i) {
+        if (i) newPath += L';';
+        newPath += parts[i];
+    }
+    WriteSystemPath(newPath);
+    BroadcastEnvironmentChange();
+}
+
+// Writes the "humatype" command into installDir (which goes on PATH). `start`
+// launches electron.exe as a detached GUI process with no console attached, so it
+// survives the shell window being closed. %~dp0 keeps the script path-independent.
+static void WriteLauncherScript(const std::wstring& installDir) {
+    fs::path scriptPath = fs::path(installDir) / kLauncherName;
+    std::ofstream out(scriptPath, std::ios::binary);
+    out << "@echo off\r\n"
+        << "start \"\" /D \"%~dp0\" \"%~dp0node_modules\\electron\\dist\\electron.exe\" . %*\r\n";
+}
+
+// ---------- shell integration ----------
+//
+// One humatype.cmd on the system PATH is all three shells' worth of coverage:
+// cmd.exe finds it because .CMD is in PATHEXT, and both Windows PowerShell 5 and
+// pwsh 7 resolve PATHEXT executables from PATH the same way (verified with
+// Get-Command). Editing PowerShell profiles instead would be strictly worse --
+// a Store/MSIX pwsh has its $PSHOME under C:\Program Files\WindowsApps, which is
+// not writable even elevated and is version-stamped, so the edit would fail today
+// and be lost on the next pwsh update.
+
+static void InstallShellIntegration(const std::wstring& installDir) {
+    Log(L"Adding the \"humatype\" command (cmd, PowerShell 5, pwsh 7)...");
+    WriteLauncherScript(installDir);
+    AddInstallDirToPath(installDir);
+}
+
+static void RemoveShellIntegration(const std::wstring& installDir) {
+    Log(L"Removing the \"humatype\" command from PATH...");
+    RemoveInstallDirFromPath(installDir);
+}
+
 // ---------- elevation ----------
 
 static bool RelaunchElevated(const std::vector<std::wstring>& args) {
@@ -262,12 +391,15 @@ static void DoInstall(const std::wstring& customDir) {
     if (!CommandAvailable(L"npm")) {
         Fail(L"npm was not found on PATH. Install Node.js (https://nodejs.org) and try again.");
     }
+    if (!CommandAvailable(L"node")) {
+        Fail(L"node was not found on PATH. Install Node.js (https://nodejs.org) and try again.");
+    }
 
     std::wstring installDir = customDir.empty()
-        ? KnownFolder(FOLDERID_ProgramFiles) + L"\\AutoTyper"
+        ? KnownFolder(FOLDERID_ProgramFiles) + L"\\HumaTyper"
         : customDir;
 
-    fs::path tempDir = fs::temp_directory_path() / (L"AutoTyperInstall_" + std::to_wstring(GetCurrentProcessId()));
+    fs::path tempDir = fs::temp_directory_path() / (L"HumaTyperInstall_" + std::to_wstring(GetCurrentProcessId()));
     std::error_code ec;
     fs::create_directories(tempDir, ec);
     fs::path repoDir = tempDir / L"repo";
@@ -278,8 +410,11 @@ static void DoInstall(const std::wstring& customDir) {
         CleanupAndFail(tempDir, L"git clone failed.");
     }
 
+    // --include=dev: electron and typescript are devDependencies, so a machine with
+    // NODE_ENV=production or npm's omit=dev configured would otherwise skip them and
+    // fail the build.
     Log(L"\nInstalling npm dependencies (this can take a few minutes)...");
-    if (!RunAndWait(L"npm install", repoDir.wstring(), &code)) {
+    if (!RunAndWait(L"npm install --include=dev", repoDir.wstring(), &code)) {
         CleanupAndFail(tempDir, L"npm install failed.");
     }
 
@@ -297,6 +432,23 @@ static void DoInstall(const std::wstring& customDir) {
     fs::path electronPkg = repoDir / L"node_modules" / L"electron";
     if (!fs::exists(electronPkg)) {
         CleanupAndFail(tempDir, L"node_modules/electron is missing after npm install.");
+    }
+
+    // Electron 43+ ships no postinstall script (hasInstallScript: false), so
+    // `npm install` fetches the package but NOT the ~350 MB runtime under dist/.
+    // The download is exposed as the "install-electron" bin instead, and it has to
+    // be invoked explicitly. Skipping this is what silently produces an install
+    // whose shortcuts point at a nonexistent electron.exe.
+    fs::path electronExeSrc = electronPkg / L"dist" / L"electron.exe";
+    if (!fs::exists(electronExeSrc)) {
+        Log(L"\nDownloading the Electron runtime (~350 MB, this can take a few minutes)...");
+        if (!RunAndWait(L"node \"" + (electronPkg / L"install.js").wstring() + L"\"", repoDir.wstring(), &code)) {
+            CleanupAndFail(tempDir, L"Failed to download the Electron runtime.");
+        }
+    }
+    if (!fs::exists(electronExeSrc)) {
+        CleanupAndFail(tempDir, L"The Electron runtime is still missing after the download step "
+                                L"(expected node_modules\\electron\\dist\\electron.exe).");
     }
 
     if (fs::exists(installDir)) {
@@ -332,31 +484,38 @@ static void DoInstall(const std::wstring& customDir) {
         CleanupAndFail(tempDir, L"Failed to copy the Electron runtime: " + std::wstring(ec.message().begin(), ec.message().end()));
     }
 
+    std::wstring electronExe = installDir + L"\\node_modules\\electron\\dist\\electron.exe";
+    if (!fs::exists(electronExe)) {
+        CleanupAndFail(tempDir, L"The Electron runtime did not copy correctly; " + electronExe + L" is missing.");
+    }
+
     // Drop a copy of ourselves in as the uninstaller.
     fs::copy_file(SelfPath(), fs::path(installDir) / kUninstallerName, fs::copy_options::overwrite_existing, ec);
 
     Log(L"Creating shortcuts...");
-    std::wstring electronExe = installDir + L"\\node_modules\\electron\\dist\\electron.exe";
     std::wstring iconPath = installDir + L"\\build\\icon.ico";
 
     std::wstring startMenuDir = KnownFolder(FOLDERID_CommonPrograms);
     if (!startMenuDir.empty()) {
-        CreateShortcut(startMenuDir + L"\\AutoTyper.lnk", electronExe, L".", installDir, iconPath);
+        CreateShortcut(startMenuDir + L"\\HumaTyper.lnk", electronExe, L".", installDir, iconPath);
     }
     std::wstring desktopDir = KnownFolder(FOLDERID_PublicDesktop);
     if (!desktopDir.empty()) {
-        CreateShortcut(desktopDir + L"\\AutoTyper.lnk", electronExe, L".", installDir, iconPath);
+        CreateShortcut(desktopDir + L"\\HumaTyper.lnk", electronExe, L".", installDir, iconPath);
     }
 
     Log(L"Registering with Windows (Add/Remove Programs)...");
     DWORD sizeKb = static_cast<DWORD>(DirSizeBytes(installDir) / 1024);
     WriteUninstallInfo(installDir, sizeKb);
 
+    InstallShellIntegration(installDir);
+
     Log(L"Cleaning up temporary files...");
     fs::remove_all(tempDir, ec);
 
     Log(L"\n" + std::wstring(kAppName) + L" installed to " + installDir);
-    Log(L"A shortcut was added to the Start Menu and Desktop.\n");
+    Log(L"A shortcut was added to the Start Menu and Desktop.");
+    Log(L"Open a new Command Prompt or PowerShell window and type \"humatype\" to launch it.\n");
     Log(L"Press Enter to exit...");
     std::wcin.get();
 }
@@ -368,18 +527,20 @@ static void DoUninstall() {
 
     std::wstring installDir = ReadInstallLocation();
     if (installDir.empty()) {
-        installDir = KnownFolder(FOLDERID_ProgramFiles) + L"\\AutoTyper";
+        installDir = KnownFolder(FOLDERID_ProgramFiles) + L"\\HumaTyper";
     }
 
     Log(L"Removing shortcuts...");
     std::error_code ec;
     std::wstring startMenuDir = KnownFolder(FOLDERID_CommonPrograms);
-    if (!startMenuDir.empty()) fs::remove(startMenuDir + L"\\AutoTyper.lnk", ec);
+    if (!startMenuDir.empty()) fs::remove(startMenuDir + L"\\HumaTyper.lnk", ec);
     std::wstring desktopDir = KnownFolder(FOLDERID_PublicDesktop);
-    if (!desktopDir.empty()) fs::remove(desktopDir + L"\\AutoTyper.lnk", ec);
+    if (!desktopDir.empty()) fs::remove(desktopDir + L"\\HumaTyper.lnk", ec);
 
     Log(L"Removing registry entries...");
     DeleteUninstallRegistryKey();
+
+    RemoveShellIntegration(installDir);
 
     Log(L"Removing installed files...");
     // We run from inside installDir, so a detached cmd deletes it.
@@ -400,7 +561,9 @@ static void DoUninstall() {
 
 // ---------- entry point ----------
 
-int main() {
+// wmain (not main): CMake links with -municode under MinGW, and MSVC auto-selects
+// wmainCRTStartup, so both toolchains expect the wide entry point.
+int wmain() {
     int argc = 0;
     LPWSTR* argvRaw = CommandLineToArgvW(GetCommandLineW(), &argc);
 

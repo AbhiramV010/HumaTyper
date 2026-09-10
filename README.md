@@ -1,4 +1,4 @@
-# AutoTyper
+# HumaTyper
 
 A desktop autotyper built with Electron. Paste text, pick a speed, and it replays that
 text as real keystrokes into a window you pick — editors, chat boxes, games,
@@ -19,15 +19,15 @@ appears; later starts are instant.
 ## How to type something
 
 1. Pick the **target window** from the list. **Refresh** re-reads the open windows;
-   the list also refreshes whenever you come back to AutoTyper.
+   the list also refreshes whenever you come back to HumaTyper.
 2. Paste your text into the big box.
 3. Set the speed — **words per minute** (5 characters = 1 word, the standard
    convention) or a raw **delay per keystroke** in milliseconds.
-4. Press **Start typing**. AutoTyper counts down, brings your chosen window to the
+4. Press **Start typing**. HumaTyper counts down, brings your chosen window to the
    front, and types into it. If the focus moves to another app mid-run, typing stops
    rather than spilling keystrokes into it.
 5. Press **F6** to stop early, or **F7** as an emergency stop. Both work while
-   AutoTyper is in the background, and `Esc` stops it while the app is focused.
+   HumaTyper is in the background, and `Esc` stops it while the app is focused.
 
 ## Options
 
@@ -41,7 +41,7 @@ appears; later starts are instant.
 | Extra pause per line | Added after each Enter, for editors that autocomplete or reindent. |
 | Repeat / Pause between repeats | Types the text several times over. |
 | Start / stop and emergency stop hotkeys | Click the box, press your combination. Registered globally. |
-| Minimize on start | Gets AutoTyper out of the way when a run begins. |
+| Minimize on start | Gets HumaTyper out of the way when a run begins. |
 | Keep on top | Pins the window above other apps. |
 
 Everything is saved automatically and restored next launch, including the text.
@@ -132,7 +132,7 @@ reported instead of sent, and checks the engine reconstructs each test string ex
   platforms the Start button is disabled and says so.
 - **Whatever has focus gets the keystrokes.** If you alt-tab mid-run, the rest of the
   text lands in the new window. Stop first.
-- **Elevated targets need an elevated AutoTyper.** Windows blocks synthetic input from a
+- **Elevated targets need an elevated HumaTyper.** Windows blocks synthetic input from a
   normal process into an app running as administrator; the engine reports this instead
   of silently typing nothing.
 - On a normal finish, the window stays minimized if you minimized it on start — it only

@@ -243,7 +243,7 @@ async function refreshWindows(): Promise<void> {
 function refreshTargetHint(): void {
   const target = selectedWindow();
   el.targetHint.textContent = target
-    ? `AutoTyper brings ${target.process} to the front when typing starts, and stops if focus moves away.`
+    ? `HumaTyper brings ${target.process} to the front when typing starts, and stops if focus moves away.`
     : 'Pick the window the keystrokes should go to.';
 }
 

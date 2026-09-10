@@ -425,7 +425,7 @@ function createWindow(): void {
     minWidth: 560,
     minHeight: 620,
     backgroundColor: '#14161c',
-    title: 'AutoTyper',
+    title: 'HumaTyper',
     icon: path.join(__dirname, 'build', 'icon.ico'),
     show: false,
     alwaysOnTop: Boolean(settings.alwaysOnTop),
