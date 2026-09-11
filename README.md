@@ -1,4 +1,13 @@
-# HumaTyper
+<p align="center">
+  <a href="https://git.io/typing-svg">
+    <img src="https://readme-typing-svg.demolab.com?font=Rajdhani&weight=700&size=40&duration=3000&pause=1000&color=FFFFFF&center=true&vCenter=true&repeat=false&width=1000&lines=HumaTyper" alt="HumaTyper" />
+  </a>
+</p>
+<p align="center">
+  <a href="https://git.io/typing-svg">
+    <img src="https://readme-typing-svg.demolab.com?font=Rajdhani&weight=500&size=22&duration=5000&pause=1500&color=FFFFFF&center=true&vCenter=true&width=1000&height=30&lines=Lifelike+typing+for+screen+recordings.;Rhythm+learned+from+136M+keystrokes.;Natural+pacing%2C+typos%2C+and+corrections.;Open+source+and+MIT+licensed." alt="Lifelike typing for screen recordings. Rhythm learned from 136M keystrokes. Natural pacing, typos, and corrections. Open source and MIT licensed." />
+  </a>
+</p>
 
 HumaTyper types your text into another window one keystroke at a time. The timing and the
 typos come from a model fitted to real people typing. It's for places where you can't paste:
