@@ -1,10 +1,4 @@
-<#
-  A text box to type into, for testing the engine with real keystrokes.
-  Dry runs miss OS-level faults such as key repeat from a held key.
-
-  Prints:
-    RESULT <single line, with \n and \r escaped>
-#>
+# Catches OS-level faults dry runs miss; prints "RESULT <text with \n, \r escaped>".
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)][string]$Engine,
@@ -31,7 +25,7 @@ $box.Font = New-Object System.Drawing.Font('Consolas', 11)
 $box.AcceptsTab = $true
 $form.Controls.Add($box)
 
-# The engine starts first and waits out its countdown while focus settles.
+# Engine's countdown gives the form time to take focus.
 $arguments = @(
   '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
   '-File', $Engine,
@@ -50,7 +44,7 @@ $timer.Add_Tick({
       $form.Close()
     }
     else {
-      # Keep focus: anything stealing it takes the remaining keystrokes.
+      # Anything stealing focus takes the remaining keystrokes.
       $form.Activate()
     }
   })

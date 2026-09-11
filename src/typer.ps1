@@ -1,20 +1,10 @@
-<#
-  Replays UTF-8 file text as real keystrokes via SendInput.
-
-  stdout protocol, consumed by the Electron main process:
-    #C <secondsRemaining>     countdown tick
-    #P <typedChars> <total>   progress
-    #E <message>              fatal error
-    #D                        done
-#>
+# stdout protocol for main.ts: #C <secs>, #P <typed> <total>, #E <message>, #D.
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)][string]$TextFile,
   [string]$StopFile = '',
-  # Window the keystrokes belong to; it is brought to the front before typing
-  # starts and watched afterwards, so nothing lands in the wrong place.
   [long]$TargetHwnd = 0,
-  # Pre-sampled timings from src/model/sampler.ts; overrides the flat delay.
+  # From src/model/sampler.ts; overrides the flat delay.
   [string]$ScheduleFile = '',
   [int]$DelayUs = 40000,
   [int]$JitterPct = 0,
@@ -22,13 +12,13 @@ param(
   [int]$Repeat = 1,
   [int]$LineDelayMs = 0,
   [int]$RepeatDelayMs = 500,
-  # Reports keystrokes instead of sending them; skips every wait.
+  # Reports keystrokes without sending or waiting.
   [switch]$DryRun
 )
 
 $ErrorActionPreference = 'Stop'
 
-# Whole microseconds, so comma-decimal locales cannot misparse the argument.
+# Integer microseconds dodge comma-decimal locale parsing.
 $DelayMs = $DelayUs / 1000.0
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -127,13 +117,12 @@ public static class AutoTyperNative
         }
     }
 
-    /// <summary>Types a single BMP character.</summary>
     public static void SendChar(char c)
     {
         Send(new INPUT[] { UnicodeInput(c, false), UnicodeInput(c, true) });
     }
 
-    /// <summary>Types an astral character (emoji) as its surrogate pair, in one batch.</summary>
+    // One batch, so the pair can't be split.
     public static void SendSurrogatePair(char high, char low)
     {
         Send(new INPUT[] {
@@ -142,13 +131,11 @@ public static class AutoTyperNative
         });
     }
 
-    /// <summary>Presses and releases a virtual key (Enter, Tab, ...).</summary>
     public static void SendKey(ushort vk)
     {
         Send(new INPUT[] { VirtualKeyInput(vk, false), VirtualKeyInput(vk, true) });
     }
 
-    /// <summary>Owning process of a window, or 0 if the handle is dead.</summary>
     private static uint ProcessOf(IntPtr hWnd)
     {
         uint pid;
@@ -162,10 +149,7 @@ public static class AutoTyperNative
         return IsWindow(hWnd);
     }
 
-    /// <summary>
-    /// True while the front window belongs to the target's process. Dialogs and
-    /// popups of the target app count, anything else does not.
-    /// </summary>
+    // The target app's own dialogs and popups count as focused.
     public static bool HasFocus(IntPtr hWnd)
     {
         IntPtr front = GetForegroundWindow();
@@ -177,11 +161,7 @@ public static class AutoTyperNative
         return pid == target;
     }
 
-    /// <summary>
-    /// Brings the target to the front. Windows only grants a plain
-    /// SetForegroundWindow to a few callers, so this also borrows the input
-    /// queue of the current front window, which covers the rest.
-    /// </summary>
+    // Windows restricts SetForegroundWindow; attaching input queues gets around it.
     public static bool Focus(IntPtr hWnd)
     {
         if (!IsWindow(hWnd)) return false;
@@ -229,8 +209,7 @@ function Test-Stopped {
   return $false
 }
 
-# Once a target is chosen the keystrokes belong to it alone, so losing the
-# front window aborts the run instead of typing into whatever took over.
+# Abort rather than type into whatever took focus.
 function Assert-TargetFocus {
   if ($Target -eq [IntPtr]::Zero) { return }
   if (-not [AutoTyperNative]::HasFocus($Target)) {
@@ -238,7 +217,7 @@ function Assert-TargetFocus {
   }
 }
 
-# Start-Sleep resolves to ~15 ms, so short waits spin instead.
+# Start-Sleep has ~15 ms resolution, so short waits spin.
 function Wait-Precise([double]$ms) {
   if ($ms -le 0.05) { return }
   if ($ms -ge 20) {
@@ -255,14 +234,12 @@ function Wait-Precise([double]$ms) {
   }
 }
 
-# Sampled schedule, one "delayUs,kind,value" step per line, played straight through.
-# Kind 0 is a Unicode code point, kind 1 a virtual key.
-# Repeats and line delays are already baked into the schedule.
-# Press and release together: longer holds trigger Windows key-repeat.
+# Lines of delayUs,kind,value; kind 0 is a code point, 1 a virtual key.
+# Press and release together: longer holds trigger key-repeat.
 function Invoke-Schedule([string]$path) {
   $lines = [System.IO.File]::ReadAllLines($path)
 
-  # Parallel arrays, not objects: per-keystroke allocation costs too much.
+  # Parallel arrays avoid per-keystroke allocation.
   $count = $lines.Length
   $delayMs = New-Object 'double[]' $count
   $kind = New-Object 'int[]' $count
@@ -334,7 +311,6 @@ try {
   $total = $text.Length * $Repeat
   $typed = 0
 
-  # Countdown so the user can focus the target window.
   $remainingMs = $StartDelayMs
   while ($remainingMs -gt 0) {
     if (Test-Stopped) { exit 0 }
@@ -352,7 +328,7 @@ try {
     if (-not [AutoTyperNative]::Focus($Target)) {
       throw 'Could not bring the chosen window to the front. It may be running with higher privileges than AutoTyper.'
     }
-    # Let the window finish activating before the first keystroke arrives.
+    # Let activation settle before the first key.
     Start-Sleep -Milliseconds 120
     if (Test-Stopped) { Emit '#D'; exit 0 }
   }
@@ -401,7 +377,6 @@ try {
         Emit "#P $typed $total"
       }
 
-      # Per-keystroke pause, optionally humanised with jitter.
       $wait = $DelayMs
       if ($jitter -gt 0) {
         $wait = $DelayMs * (1.0 + (($rand.NextDouble() * 2.0) - 1.0) * $jitter)

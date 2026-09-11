@@ -136,18 +136,15 @@ const FIXED_ALWAYS_ON_TOP = false;
 const FIXED_START_HOTKEY = 'F6';
 const FIXED_STOP_HOTKEY = 'F7';
 
-/** Filled in from the fitted model once it has been read. */
 let model: ModelInfo = { available: false };
 
 let windows: WindowInfo[] = [];
-/** Remembered from the last session so the same window can be re-selected. */
+/** Handles change between sessions, so the target is matched by name. */
 let savedTarget = { title: '', process: '' };
 
 let running = false;
 let saveTimer: number | undefined;
 let toastTimer: number | undefined;
-
-/* --- Settings plumbing --- */
 
 function collect(): CollectedSettings {
   const target = selectedWindow();
@@ -188,8 +185,6 @@ function apply(loaded: LoadedSettings): void {
   refreshDerived();
 }
 
-/* --- Target window --- */
-
 function selectedWindow(): WindowInfo | undefined {
   const hwnd = Number(el.targetWindow.value);
   return windows.find((w) => w.hwnd === hwnd);
@@ -200,7 +195,6 @@ function windowLabel(info: WindowInfo): string {
   return `${title}  \u2014  ${info.process}`;
 }
 
-/** Re-reads the open windows, keeping the current pick if it is still there. */
 async function refreshWindows(): Promise<void> {
   const previous = selectedWindow();
   el.refreshWindowsBtn.disabled = true;
@@ -230,7 +224,7 @@ async function refreshWindows(): Promise<void> {
     el.targetWindow.append(option);
   }
 
-  // Keep the live pick if it survived; otherwise fall back to the saved one.
+  // Live pick first, then saved title+process, then process alone.
   const match =
     (previous && windows.find((w) => w.hwnd === previous.hwnd)) ??
     windows.find((w) => w.title === savedTarget.title && w.process === savedTarget.process) ??
@@ -247,9 +241,7 @@ function refreshTargetHint(): void {
     : 'Pick the window the keystrokes should go to.';
 }
 
-/* --- Speed controls --- */
-
-/** Paints the filled portion of a range input and mirrors it to its number box. */
+/** Drives the CSS track fill. */
 function paintRange(range: HTMLInputElement): void {
   const min = Number(range.min);
   const max = Number(range.max);
@@ -301,8 +293,6 @@ function refreshDerived(): void {
   el.estimate.textContent = `About ${formatDuration(total)} at ${rate}.`;
 }
 
-/* --- Run control --- */
-
 function toast(message: string, isError = false): void {
   clearTimeout(toastTimer);
   el.toast.textContent = message;
@@ -352,8 +342,6 @@ function stop(): void {
   el.progressText.textContent = 'Stopping...';
 }
 
-/* --- Wiring --- */
-
 el.startBtn.addEventListener('click', () => (running ? stop() : start()));
 el.refreshWindowsBtn.addEventListener('click', () => refreshWindows());
 
@@ -364,7 +352,7 @@ el.targetWindow.addEventListener('change', () => {
   scheduleSave();
 });
 
-// The list goes stale as soon as the user leaves; re-read it when they return.
+// Windows may have opened or closed while we were unfocused.
 window.addEventListener('focus', () => {
   if (!running) refreshWindows();
 });
@@ -378,7 +366,6 @@ el.avgSpeedBtn.addEventListener('click', () => {
   scheduleSave();
 });
 
-/** Keeps a slider and its number input in lockstep. */
 function linkRange(range: HTMLInputElement, number: HTMLInputElement): void {
   range.addEventListener('input', () => {
     number.value = range.value;
@@ -438,7 +425,7 @@ api.onStopped(async ({ error }) => {
   if (error) {
     el.progressText.textContent = 'Stopped';
     toast(error, true);
-    // Surface the failure even if the window was minimized on start.
+    // The window may be minimized from the start of the run.
     await api.restoreWindow();
   } else {
     const done = el.progressFill.style.width === '100%';

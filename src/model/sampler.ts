@@ -1,36 +1,29 @@
 'use strict';
 
-/**
- * Turns text into a schedule of keystrokes with human timings.
- *
- * Sampled up front, so the statistics stay testable without a real keyboard.
- */
+// Sampled up front so the timing statistics are testable offline.
 
 import { LogNormal, TypingModel, charClass } from './types';
 
 export interface Keystroke {
   kind: 'char' | 'backspace';
-  /** The character to send; empty for a backspace. */
+  /** Empty for a backspace. */
   ch: string;
-  /** Wait before this keystroke, in microseconds. */
   delayUs: number;
 }
 
 export interface SampleOptions {
   text: string;
-  /** Target net speed for the original text, corrections included. */
+  /** Net speed over the original text, corrections included. */
   wpm: number;
-  /** Mistakes per character; 0 disables them. The text ends correct regardless. */
+  /** Per character; the text always ends correct. */
   errorRate?: number;
-  /** Extra pause after a newline, in ms. */
   lineDelayMs?: number;
-  /** Fixes the sequence, for tests and reproducible runs. */
   seed?: number;
 }
 
-/** QWERTY neighbours, used when the data has no confusion row for a character. */
+/** Fallback when the model has no confusion row. */
 const KEYBOARD_ROWS = ['`1234567890-=', 'qwertyuiop[]\\', "asdfghjkl;'", 'zxcvbnm,./'];
-/** How far each row is shifted relative to the one above it, in key widths. */
+/** Row stagger, in key widths. */
 const ROW_OFFSETS = [0, 0.5, 0.75, 1.25];
 
 const adjacency = buildAdjacency();
@@ -55,7 +48,7 @@ function buildAdjacency(): Map<string, string[]> {
   return map;
 }
 
-/** Deterministic PRNG, so a seed reproduces a run exactly. */
+/** Seedable, so a run reproduces exactly. */
 function mulberry32(seed: number): () => number {
   let state = seed >>> 0;
   return () => {
@@ -76,7 +69,7 @@ class Random {
     return this.next();
   }
 
-  /** Standard normal via Box-Muller, keeping the second value for the next call. */
+  /** Box-Muller; caches the second value. */
   normal(): number {
     if (this.spare !== null) {
       const value = this.spare;
@@ -100,7 +93,6 @@ class Random {
     return items[Math.floor(this.next() * items.length) % items.length];
   }
 
-  /** Draws a key from weighted options. */
   weighted(weights: Record<string, number>): string | null {
     let total = 0;
     for (const key in weights) total += weights[key];
@@ -113,7 +105,6 @@ class Random {
     return null;
   }
 
-  /** Draws an index from a probability mass function. */
   fromPmf(pmf: number[]): number {
     let roll = this.next();
     for (let i = 0; i < pmf.length; i++) {
@@ -124,13 +115,12 @@ class Random {
   }
 }
 
-/** The character the typist actually hits when they mis-hit `intended`. */
 function wrongCharacter(model: TypingModel, intended: string, random: Random): string | null {
   const row = model.errors.confusion[intended];
   const sampled = row ? random.weighted(row) : null;
   if (sampled) return sampled;
 
-  // Nothing observed for this character: fall back to hitting a neighbouring key.
+  // Unobserved character: hit a neighbouring key.
   const lower = intended.toLowerCase();
   const neighbours = adjacency.get(lower);
   if (!neighbours || !neighbours.length) return null;
@@ -138,7 +128,6 @@ function wrongCharacter(model: TypingModel, intended: string, random: Random): s
   return intended === lower ? neighbour : neighbour.toUpperCase();
 }
 
-/** The model's expected log-interval for a letter pair, falling back as needed. */
 function expectedInterval(model: TypingModel, prev: string, ch: string): LogNormal {
   const exact = model.digraphs[prev + ch];
   if (exact) return exact;
@@ -150,24 +139,20 @@ function expectedInterval(model: TypingModel, prev: string, ch: string): LogNorm
 interface PlannedKey {
   kind: 'char' | 'backspace';
   ch: string;
-  /** Which distribution the interval before this key comes from. */
+  /** Distribution for the interval before this key. */
   timing: 'normal' | 'notice' | 'backspace' | 'resume';
 }
 
-/**
- * Decides what gets typed, mistakes and the backspaces that undo them included.
- *
- * Every mistake is corrected, so only its timing comes from the data.
- */
+/** Mistakes are always corrected, so the final text is unchanged. */
 function planKeys(model: TypingModel, chars: string[], errorRate: number, random: Random): PlannedKey[] {
   const keys: PlannedKey[] = [];
   const kinds = model.errors.kinds;
   const text = chars;
 
-  /** Whether one backspace removes exactly this character; editors disagree on astral ones. */
+  /** Editors disagree on backspacing astral and combining characters. */
   const simple = (ch: string): boolean => ch.length === 1 && !/\p{M}/u.test(ch);
 
-  /** Characters typeable from `at` without crossing a line break or a risky character. */
+  /** Stops at line breaks and risky characters. */
   const runLength = (at: number, wanted: number): number => {
     let count = 0;
     while (count < wanted && at + count < text.length && text[at + count] !== '\n' && simple(text[at + count])) {
@@ -195,7 +180,6 @@ function planKeys(model: TypingModel, chars: string[], errorRate: number, random
       transposition: kinds.transposition,
     });
 
-    /** Characters typed wrongly before the mistake is noticed. */
     const mistaken: string[] = [];
 
     if (kind === 'transposition' && i + 1 < text.length && text[i + 1] !== '\n') {
@@ -218,7 +202,7 @@ function planKeys(model: TypingModel, chars: string[], errorRate: number, random
       mistaken.push(wrong);
     }
 
-    // Type on obliviously for a while, then backspace over everything since.
+    // Keep typing until noticed, then backspace over all of it.
     const consumed = kind === 'transposition' ? 2 : kind === 'insertion' ? 0 : 1;
     const lag = Math.min(random.fromPmf(model.errors.detectionLag), runLength(i + consumed, 8));
     const followOn: string[] = [];
@@ -232,7 +216,6 @@ function planKeys(model: TypingModel, chars: string[], errorRate: number, random
       keys.push({ kind: 'backspace', ch: '', timing: k === 0 ? 'notice' : 'backspace' });
     }
 
-    // Retype from the mistake, correctly this time.
     const retype = consumed + lag || 1;
     for (let k = 0; k < retype && i + k < text.length; k++) {
       keys.push({ kind: 'char', ch: text[i + k], timing: k === 0 ? 'resume' : 'normal' });
@@ -248,23 +231,18 @@ function sampleLogNormal(distribution: LogNormal, random: Random, extraSigma = 0
   return Math.exp(distribution.mu + sigma * random.normal());
 }
 
-/**
- * Produces the full keystroke schedule for a run.
- *
- * Intervals are scaled once at the end, so added corrections never change the WPM.
- */
+/** Scaled once at the end, so corrections never change the WPM. */
 export function sampleSchedule(model: TypingModel, options: SampleOptions): Keystroke[] {
   const text = options.text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   if (!text.length) return [];
 
-  // Split by code point so an emoji stays a single keystroke.
+  // Code points, so an emoji is one keystroke.
   const chars = Array.from(text);
 
   const random = new Random(mulberry32(options.seed ?? (Math.random() * 2 ** 32) >>> 0));
   const errorRate = Math.max(0, Math.min(0.5, options.errorRate ?? model.errors.rate));
   const keys = planKeys(model, chars, errorRate, random);
 
-  // One speed level per run, as a typist's pace is fixed within one.
   const runOffset = random.normal() * model.variation.runSigma;
   const keystrokeSigma = model.variation.keystrokeSigma;
 
@@ -283,15 +261,14 @@ export function sampleSchedule(model: TypingModel, options: SampleOptions): Keys
       ratio = 1;
     } else {
       const distribution = expectedInterval(model, previousChar, key.ch);
-      // The pair supplies the mean; all spread comes from per-keystroke variation.
+      // Pair gives the mean; spread comes only from keystrokeSigma.
       ratio = Math.exp(distribution.mu + runOffset + keystrokeSigma * random.normal());
     }
 
     let delayMs = model.fitted.medianIkiMs * ratio;
     if (previousChar === '\n' && options.lineDelayMs) delayMs += options.lineDelayMs;
 
-    // Hold durations are fitted but never emitted: realistic holds trip key-repeat.
-    // Intervals are press-to-press, so leaving holds out changes no timing.
+    // No holds: realistic ones trigger key-repeat, and intervals are press-to-press.
     schedule.push({
       kind: key.kind,
       ch: key.ch,
@@ -305,11 +282,7 @@ export function sampleSchedule(model: TypingModel, options: SampleOptions): Keys
   return schedule;
 }
 
-/**
- * Scales every interval by one factor so the run delivers the requested speed.
- *
- * Speed is measured against the original text, not the keystrokes actually sent.
- */
+/** Measured against the original text, not the keystrokes sent. */
 function rescaleToWpm(schedule: Keystroke[], characters: number, wpm: number): void {
   const target = (characters / (Math.max(1, wpm) * 5)) * 60000;
   let total = 0;

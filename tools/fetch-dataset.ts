@@ -1,31 +1,19 @@
 'use strict';
 
-/**
- * Downloads a random sample of participants from the 136M Keystrokes dataset.
- *
- *   Dhakal, Feit, Kristensson, Oulasvirta.
- *   "Observations on Typing from 136 Million Keystrokes." CHI 2018.
- *   https://userinterfaces.aalto.fi/136Mkeystrokes/
- *
- * Range requests avoid the 1.4 GB download. Output lands in gitignored
- * data/cache/: only the fitted model is committed, never raw keystrokes.
- *
- * Usage:
- *   npm run dataset:list                 print archive layout and exit
- *   npm run dataset:fetch -- --n 2000    sample 2000 participants
- */
+// Range-requests a participant sample instead of the whole 1.4 GB archive.
+// Usage: npm run dataset:list | npm run dataset:fetch -- --n 2000
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { RemoteZip, ZipEntry } from './zip-remote';
 
 const ARCHIVE_URL = 'https://userinterfaces.aalto.fi/136Mkeystrokes/data/Keystrokes.zip';
-// Resolved against the working directory: npm scripts run from the project root.
+// npm scripts run from the project root.
 const CACHE_DIR = path.join(process.cwd(), 'data', 'cache');
 const DIRECTORY_CACHE = path.join(CACHE_DIR, 'entries.json');
 const PARTICIPANT_DIR = path.join(CACHE_DIR, 'participants');
 
-/** Participant keystroke logs are named like `Keystrokes/files/100023_keystrokes.txt`. */
+/** e.g. Keystrokes/files/100023_keystrokes.txt */
 const PARTICIPANT_FILE = /(?:^|\/)(\d+)_keystrokes\.txt$/;
 
 interface Args {
@@ -47,7 +35,7 @@ function parseArgs(argv: string[]): Args {
   return args;
 }
 
-/** Deterministic PRNG so a given seed always samples the same participants. */
+/** Seeded, so a seed always samples the same participants. */
 function mulberry32(seed: number): () => number {
   let state = seed >>> 0;
   return () => {
@@ -72,7 +60,7 @@ function mib(bytes: number): string {
   return (bytes / 1024 / 1024).toFixed(1) + ' MiB';
 }
 
-/** Reads the central directory, caching it so repeat runs skip the 20 MB fetch. */
+/** Cached; the central directory is a 20 MB fetch. */
 async function loadDirectory(zip: () => Promise<RemoteZip>): Promise<ZipEntry[]> {
   if (fs.existsSync(DIRECTORY_CACHE)) {
     const cached = JSON.parse(fs.readFileSync(DIRECTORY_CACHE, 'utf8')) as ZipEntry[];

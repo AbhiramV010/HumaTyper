@@ -1,13 +1,6 @@
 'use strict';
 
-/**
- * End-to-end check of the PowerShell engine against a sampled schedule.
- *
- * Dry-run mode reports keystrokes instead of sending them, covering what the
- * TypeScript tests cannot: the schedule file format and PowerShell's parsing.
- *
- *   npm run engine:verify
- */
+// Dry-runs typer.ps1 to cover the schedule format and PowerShell's parsing.
 
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -30,7 +23,7 @@ const CASES = [
   'unicode éèü ok, emoji \u{1F680} too',
 ];
 
-/** Mirrors serializeSchedule in main.ts. */
+/** Keep in sync with serializeSchedule in main.ts. */
 function serialize(schedule: Keystroke[]): string {
   return schedule
     .map((key) => {
@@ -53,7 +46,6 @@ function serialize(schedule: Keystroke[]): string {
     .join('\n');
 }
 
-/** Rebuilds the text from the engine's dry-run report. */
 function replayReport(stdout: string): string {
   const buffer: string[] = [];
   for (const line of stdout.split(/\r?\n/)) {

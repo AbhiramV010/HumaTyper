@@ -1,15 +1,6 @@
 'use strict';
 
-/**
- * Types into a real text box with real keystrokes and checks what arrives.
- *
- * The only test that exercises the Win32 input path, where key repeat lives.
- * It takes over the keyboard, so it is not part of normal verification.
- *
- *   npm run live:verify
- *
- * Do not touch the keyboard while it runs.
- */
+// Only test of the real Win32 input path; takes over the keyboard while it runs.
 
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -33,16 +24,16 @@ interface Case {
 }
 
 const CASES: Case[] = [
-  // The speed the reported corruption showed up at, with corrections in play.
+  // Speed where the reported corruption appeared.
   { text: 'Fusce nec suscipit ipsum, quis ullamcorper lacus.', wpm: 60, errorRate: 0.05 },
-  // Slow enough that any per-key hold would be long: the key-repeat case.
+  // Slow enough for any hold to trigger key-repeat.
   { text: 'slow and steady wins', wpm: 20, errorRate: 0.05 },
   { text: 'Punctuation: "quoted", (parens), 50% & $9.99!', wpm: 90, errorRate: 0.03 },
   { text: 'no mistakes at all here', wpm: 120, errorRate: 0 },
   { text: 'heavy corrections stress test', wpm: 60, errorRate: 0.3 },
 ];
 
-/** Mirrors serializeSchedule in main.ts. */
+/** Keep in sync with serializeSchedule in main.ts. */
 function serialize(schedule: Keystroke[]): string {
   return schedule
     .map((key) => {

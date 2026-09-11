@@ -1,0 +1,31 @@
+# install.ps1 pulls the *-win.zip asset from the latest release.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - run: npm ci
+
+      # Otherwise electron-builder self-publishes on tags; the next step does it.
+      - run: npm run dist -- --publish never
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.zip
+            dist/*.exe

@@ -1,11 +1,6 @@
 'use strict';
 
-/**
- * Minimal read-only ZIP client that works over HTTP range requests.
- *
- * Reading the central directory and pulling only the sampled entries keeps
- * a 1.4 GB download down to a few tens of megabytes.
- */
+// Read-only ZIP over HTTP ranges: fetches single entries, not the whole archive.
 
 import * as https from 'node:https';
 import * as zlib from 'node:zlib';
@@ -14,7 +9,7 @@ const SIG_CENTRAL = 0x02014b50;
 const SIG_EOCD = 0x06054b50;
 const SIG_ZIP64_EOCD = 0x06064b50;
 const ZIP64_EXTRA_ID = 0x0001;
-/** Field value meaning "the real number lives in the zip64 extra field". */
+/** Real value lives in the zip64 extra field. */
 const NEEDS_ZIP64 = 0xffffffff;
 
 export interface ZipEntry {
@@ -26,7 +21,6 @@ export interface ZipEntry {
 }
 
 export interface RemoteZipOptions {
-  /** Called with the byte count of each range response, for progress output. */
   onBytes?: (bytes: number) => void;
 }
 
@@ -38,7 +32,6 @@ export class RemoteZip {
     readonly entries: ZipEntry[],
   ) {}
 
-  /** Fetches `length` bytes starting at `offset`. */
   private static request(url: string, offset: number, length: number): Promise<Buffer> {
     const end = offset + length - 1;
     return new Promise((resolve, reject) => {
@@ -67,7 +60,7 @@ export class RemoteZip {
         return buffer;
       } catch (err) {
         lastError = err;
-        // The host throttles bursts of range requests; back off rather than hammer it.
+        // The host throttles bursts of range requests.
         await new Promise((resolve) => setTimeout(resolve, 400 * 2 ** attempt));
       }
     }
@@ -88,7 +81,6 @@ export class RemoteZip {
     });
   }
 
-  /** Reads the archive's central directory so its entries can be fetched individually. */
   static async open(url: string, options: RemoteZipOptions = {}): Promise<RemoteZip> {
     const size = await RemoteZip.contentLength(url);
     const tailLength = Math.min(size, 128 * 1024);
@@ -101,7 +93,7 @@ export class RemoteZip {
     let directorySize = tail.readUInt32LE(eocd + 12);
     let directoryOffset = tail.readUInt32LE(eocd + 16);
 
-    // Over 65535 entries or past 4 GB: the real values live in zip64.
+    // Over 65535 entries or 4 GB, the real values live in zip64.
     const zip64 = lastIndexOfSignature(tail, SIG_ZIP64_EOCD);
     if (zip64 >= 0) {
       entryCount = Number(tail.readBigUInt64LE(zip64 + 32));
@@ -111,14 +103,13 @@ export class RemoteZip {
 
     const zip = new RemoteZip(url, options, size, []);
     const directory = await zip.range(directoryOffset, directorySize);
-    // Appended one at a time: spreading 168k entries into push overflows the stack.
+    // Spreading 168k entries into push() overflows the stack.
     for (const entry of parseCentralDirectory(directory, entryCount)) zip.entries.push(entry);
     return zip;
   }
 
-  /** Downloads and decompresses a single entry. */
   async read(entry: ZipEntry): Promise<Buffer> {
-    // The local header's extra field may differ, so read its length.
+    // Local extra field can differ from the central one; guess, then refetch.
     const guess = Math.min(30 + entry.name.length + 4096 + entry.compressedSize, this.size - entry.localHeaderOffset);
     let block = await this.range(entry.localHeaderOffset, guess);
 
@@ -165,7 +156,7 @@ function parseCentralDirectory(directory: Buffer, entryCount: number): ZipEntry[
       const extra = directory.subarray(cursor + 46 + nameLength, cursor + 46 + nameLength + extraLength);
       const zip64 = findExtraField(extra, ZIP64_EXTRA_ID);
       if (zip64) {
-        // Only the overflowed fields are present, and always in this order.
+        // Only overflowed fields are present, always in this order.
         let at = 0;
         if (uncompressedSize === NEEDS_ZIP64) { uncompressedSize = Number(zip64.readBigUInt64LE(at)); at += 8; }
         if (compressedSize === NEEDS_ZIP64) { compressedSize = Number(zip64.readBigUInt64LE(at)); at += 8; }

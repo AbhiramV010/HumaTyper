@@ -3,24 +3,22 @@ dist/
 *.log
 .claude/
 
-# Compiled from .ts sources (run `npm run build`)
+# Build output
 /main.js
 /main.js.map
 /preload.js
 /preload.js.map
 /renderer/renderer.js
 /renderer/renderer.js.map
-# Dataset cache and tool build output (only the fitted model is committed)
+# Raw dataset stays local; only the fitted model is committed
 /data/cache/
 /.tools-build/
 /src/model/*.js
 /src/model/*.js.map
 
-# TypeScript incremental build info
 *.tsbuildinfo
 
-# CMake / C++ installer build artifacts (top-level /build holds committed icons,
-# so these rules are scoped to installer/ plus the generic CMake droppings)
+# Scoped to installer/, since top-level /build holds committed icons
 /installer/build/
 /installer/out/
 /installer/cmake-build-*/
@@ -35,16 +33,13 @@ Makefile
 *.exp
 *.lib
 
-# Local environment
 .env
 .env.local
 
-# Editor / IDE
 .vscode/
 .idea/
 *.swp
 
-# OS junk
 Thumbs.db
 desktop.ini
 .DS_Store

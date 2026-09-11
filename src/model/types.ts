@@ -1,43 +1,34 @@
 'use strict';
 
-/**
- * Shape of the fitted typing model.
- *
- * Timings are log-normal ratios to the typist's own median interval, which
- * separates letter-pair difficulty from raw speed so any WPM can be rescaled.
- */
+// Timings are ratios to the typist's median interval, so any WPM rescales cleanly.
 
-/** Log-normal parameters, in log space. */
+/** Parameters in log space. */
 export interface LogNormal {
-  /** Mean of log(value). */
   mu: number;
-  /** Standard deviation of log(value). */
   sigma: number;
-  /** Observations the fit is based on. */
   n: number;
 }
 
-/** Coarse key categories used when an exact letter pair was never observed. */
+/** Backoff buckets for letter pairs never observed. */
 export type CharClass = 'lower' | 'upper' | 'digit' | 'space' | 'punct' | 'newline' | 'other';
 
 export interface ErrorModel {
-  /** Corrected errors per character typed. */
+  /** Corrected errors per character. */
   rate: number;
-  /** Relative frequency of each error kind; sums to 1. */
+  /** Sums to 1. */
   kinds: {
     substitution: number;
     insertion: number;
     transposition: number;
   };
-  /** P(typed | intended) substitutions; unseen pairs fall back to QWERTY adjacency. */
+  /** P(typed | intended); unseen rows fall back to QWERTY adjacency. */
   confusion: Record<string, Record<string, number>>;
-  /** Characters typed before the mistake is noticed, as a pmf; 0 means immediately. */
+  /** PMF of characters typed before the mistake is noticed. */
   detectionLag: number[];
-  /** The pause before the first backspace, as a ratio to the typist's median interval. */
+  /** Before the first backspace. */
   noticePause: LogNormal;
-  /** Interval between backspaces once correcting, as a ratio to the median interval. */
   backspace: LogNormal;
-  /** Interval on the first keystroke after a correction, as a ratio to the median interval. */
+  /** First keystroke after a correction. */
   resume: LogNormal;
 }
 
@@ -50,46 +41,36 @@ export interface TypingModel {
     license: string;
   };
   fitted: {
-    /** ISO date the model was produced. */
     date: string;
     participants: number;
     sentences: number;
     keystrokes: number;
-    /** Population median inter-key interval in ms, i.e. the speed the ratios are relative to. */
+    /** The base every ratio scales from. */
     medianIkiMs: number;
-    /** The typing speed that median corresponds to, in WPM. */
     medianWpm: number;
   };
 
-  /** Exact letter-pair intervals, keyed by the two characters. */
+  /** Keyed by the two characters. */
   digraphs: Record<string, LogNormal>;
-  /** Backoff by character class, keyed "prevClass>nextClass". */
+  /** Keyed "prevClass>nextClass". */
   classPairs: Record<string, LogNormal>;
-  /** Last-resort backoff. */
   global: LogNormal;
 
-  /** Key hold durations in absolute ms, keyed by character class. */
+  /** Absolute ms, not ratios; unused at runtime. */
   holds: Record<string, LogNormal>;
 
-  /**
-   * How intervals vary around their letter-pair mean.
-   *
-   * Autocorrelation stays flat across lags, so there is no drift to model:
-   * a fixed speed level per run, plus independent per-keystroke variation.
-   */
+  /** Flat autocorrelation means no drift: a per-run offset plus per-key noise. */
   variation: {
-    /** Log-space SD of the run-level speed offset, drawn once per run. */
+    /** Drawn once per run. */
     runSigma: number;
-    /** Log-space SD of the independent per-keystroke variation. */
     keystrokeSigma: number;
-    /** Residual autocorrelation by lag, kept as evidence for the above. */
+    /** Evidence for the flat autocorrelation; unused at runtime. */
     lagProfile: Record<string, number>;
   };
 
   errors: ErrorModel;
 }
 
-/** Buckets a character for model backoff. */
 export function charClass(ch: string): CharClass {
   if (ch === '\n') return 'newline';
   if (ch === ' ' || ch === '\t') return 'space';

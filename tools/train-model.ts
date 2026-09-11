@@ -1,12 +1,7 @@
 'use strict';
 
-/**
- * Fits the typing model from cached 136M Keystrokes participant logs.
- *
- * Run `npm run dataset:fetch` first. The output holds aggregates only.
- *
- *   npm run model:train -- [--min-observations 40] [--out src/model/typing-model.json]
- */
+// Needs dataset:fetch first; outputs aggregates only, never raw keystrokes.
+// Usage: npm run model:train -- [--min-observations 40] [--out src/model/typing-model.json]
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -15,13 +10,13 @@ import { CharClass, LogNormal, TypingModel, charClass } from '../src/model/types
 const PARTICIPANT_DIR = path.join(process.cwd(), 'data', 'cache', 'participants');
 const DEFAULT_OUT = path.join(process.cwd(), 'src', 'model', 'typing-model.json');
 
-/** Keystrokes that produce no character but whose cost belongs to the next one. */
+/** No character; their time belongs to the next key. */
 const MODIFIER_KEYCODES = new Set([16, 17, 18, 20, 91, 92, 93, 224]);
 const BACKSPACE = 8;
-/** Cursor movement makes the text buffer untrackable, so those sections are dropped. */
+/** Cursor moves make the buffer untrackable. */
 const NAVIGATION_KEYCODES = new Set([33, 34, 35, 36, 37, 38, 39, 40, 45, 46]);
 
-/** Intervals outside this range are dropped as pauses or clock glitches, in ms. */
+/** Outside these (ms): pauses or clock glitches. */
 const MIN_IKI = 10;
 const MAX_IKI = 5000;
 const MIN_HOLD = 5;
@@ -39,7 +34,6 @@ interface Section {
   events: Event[];
 }
 
-/** Streaming accumulator for the mean and variance of a log-transformed quantity. */
 class LogAccumulator {
   n = 0;
   private sum = 0;
@@ -79,7 +73,7 @@ function median(values: number[]): number {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-/** Parses a participant log into sections, dropping any the model cannot replay. */
+/** Drops sections whose text buffer can't be replayed. */
 function parseParticipant(text: string): Section[] {
   const lines = text.split(/\r?\n/);
   const sections = new Map<string, { sentence: string; events: Event[]; usable: boolean }>();
@@ -118,7 +112,6 @@ function parseParticipant(text: string): Section[] {
     }
     if (MODIFIER_KEYCODES.has(keycode)) continue;
     if (letter.length !== 1) {
-      // A printable key with no recorded letter: the buffer cannot be replayed.
       section.usable = false;
       continue;
     }
@@ -138,12 +131,11 @@ interface ErrorObservation {
   kind: 'substitution' | 'insertion' | 'transposition';
   intended: string;
   typed: string;
-  /** Characters typed after the mistake before the first backspace. */
+  /** Characters typed before the first backspace. */
   lag: number;
 }
 
 interface SectionAnalysis {
-  /** Index into events of each character keystroke, with its interval from the previous one. */
   intervals: { prev: string; ch: string; iki: number; clean: boolean }[];
   holds: { ch: string; hold: number }[];
   errors: ErrorObservation[];
@@ -152,11 +144,7 @@ interface SectionAnalysis {
   resumeIkis: number[];
 }
 
-/**
- * Replays a section for its timings and the mistakes the typist corrected.
- *
- * A backspace is the typist declaring that what they just typed was wrong.
- */
+/** A backspace marks what was just typed as a mistake. */
 function analyzeSection(section: Section): SectionAnalysis {
   const analysis: SectionAnalysis = {
     intervals: [],
@@ -169,11 +157,10 @@ function analyzeSection(section: Section): SectionAnalysis {
 
   const { sentence, events } = section;
   let buffer = '';
-  /** Position of the first character that diverged from the sentence, if any. */
   let errorAt = -1;
   let errorTyped = '';
   let charsSinceError = 0;
-  /** Marks intervals touched by a mistake so they do not pollute the clean timings. */
+  /** Keeps mistake-adjacent intervals out of the clean timings. */
   let dirty = false;
   let previousChar = '';
   let previousPress = 0;
@@ -193,7 +180,6 @@ function analyzeSection(section: Section): SectionAnalysis {
       dirty = true;
       buffer = buffer.slice(0, -1);
       if (errorAt >= 0 && buffer.length <= errorAt) {
-        // Backspaced past the mistake: it has been dealt with.
         errorAt = -1;
         charsSinceError = 0;
       }
@@ -228,7 +214,7 @@ function analyzeSection(section: Section): SectionAnalysis {
         lag: countLag(events, i),
       });
     } else if (position < sentence.length) {
-      // Back in step with the sentence, so later intervals are clean again.
+      // Back in step, so later intervals count as clean.
       dirty = false;
     }
 
@@ -239,7 +225,6 @@ function analyzeSection(section: Section): SectionAnalysis {
   return analysis;
 }
 
-/** Tells a plain mis-hit from a swap or an insertion by what followed. */
 function classifyError(
   sentence: string,
   position: number,
@@ -249,9 +234,9 @@ function classifyError(
 ): ErrorObservation['kind'] {
   const next = nextChar(events, index);
   if (next === null) return 'substitution';
-  // "teh" for "the": this key belongs one place later, and the next one fills the gap.
+  // "teh" for "the".
   if (typed === sentence[position + 1] && next === sentence[position]) return 'transposition';
-  // The sentence simply resumes after the stray key, so it was an extra press.
+  // Sentence resumes right after the stray key.
   if (next === sentence[position]) return 'insertion';
   return 'substitution';
 }
@@ -313,7 +298,7 @@ function main(): void {
   const kindCounts = { substitution: 0, insertion: 0, transposition: 0 };
   const lagCounts: number[] = [];
 
-  /** Per-participant median intervals, needed to convert the fit back to absolute ms. */
+  /** Converts the ratio fit back to absolute ms. */
   const participantMedians: number[] = [];
   let totalSections = 0;
   let totalKeystrokes = 0;
@@ -335,7 +320,7 @@ function main(): void {
     for (const analysis of analyses) for (const interval of analysis.intervals) allIkis.push(interval.iki);
     if (allIkis.length < 100) continue;
 
-    // Fitted as a ratio to this typist's own pace, capturing pair difficulty.
+    // Ratio to own pace separates pair difficulty from speed.
     const participantMedian = median(allIkis);
     if (!(participantMedian > 0)) continue;
     participantMedians.push(participantMedian);
@@ -381,7 +366,7 @@ function main(): void {
   console.log('Population median interval: ' + medianIkiMs.toFixed(1) + ' ms');
   console.log('Corrected errors: ' + totalErrors + ' (' + ((100 * totalErrors) / totalCharacters).toFixed(2) + '% of characters)');
 
-  // Second pass: with the interval means known, characterise what is left over.
+  // Second pass: residuals need the fitted means.
   console.log('Fitting variation structure...');
   const variation = fitVariation(files, digraphs, classPairs, global);
 
@@ -434,11 +419,7 @@ function main(): void {
   console.log('  error rate: ' + (model.errors.rate * 100).toFixed(2) + '% of characters');
 }
 
-/**
- * Splits leftover variation into per-run and per-keystroke parts.
- *
- * A flat lag profile is what rules out drift: a constant offset, not a trend.
- */
+/** Splits residual variance into per-run and per-keystroke parts. */
 function fitVariation(
   files: string[],
   digraphs: Map<string, LogAccumulator>,
@@ -450,7 +431,6 @@ function fitVariation(
 
   let squareSum = 0;
   let count = 0;
-  /** Per-section mean residual, for the between/within variance split. */
   const sectionMeans: { mean: number; n: number }[] = [];
   let withinSquareSum = 0;
   let withinCount = 0;
@@ -515,7 +495,7 @@ function fitVariation(
   const meanOfMeans = sectionMeans.reduce((sum, s) => sum + s.mean, 0) / Math.max(1, sectionMeans.length);
   const rawBetween =
     sectionMeans.reduce((sum, s) => sum + (s.mean - meanOfMeans) ** 2, 0) / Math.max(1, sectionMeans.length);
-  // A section mean carries its own sampling error; subtract it before combining.
+  // Remove each section mean's own sampling error.
   const samplingNoise =
     sectionMeans.reduce((sum, s) => sum + withinVariance / s.n, 0) / Math.max(1, sectionMeans.length);
   const betweenVariance = Math.max(0, rawBetween - samplingNoise);
@@ -550,7 +530,7 @@ function exportConfusion(confusion: Map<string, Map<string, number>>): Record<st
   const out: Record<string, Record<string, number>> = {};
   for (const [intended, row] of confusion) {
     const total = [...row.values()].reduce((sum, n) => sum + n, 0);
-    // Too few observations to be a distribution; the adjacency prior covers these.
+    // Too sparse; the sampler's adjacency fallback covers these.
     if (total < 20) continue;
     const probabilities: Record<string, number> = {};
     for (const [typed, n] of row) {

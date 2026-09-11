@@ -1,13 +1,6 @@
 'use strict';
 
-/**
- * Checks the sampled schedules before they are ever sent to a real keyboard.
- *
- * What matters most is that corrections cancel exactly: replaying a schedule
- * must reproduce the input text character for character.
- *
- *   npm run model:verify
- */
+// Most critical check: corrections must cancel, reproducing the text exactly.
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -26,7 +19,7 @@ const SAMPLES = [
   '',
 ];
 
-/** Applies a schedule like a text field; backspace removes a whole code point. */
+/** Backspace removes a whole code point, like a text field. */
 function replay(schedule: Keystroke[]): string {
   const buffer: string[] = [];
   for (const key of schedule) {
@@ -92,7 +85,7 @@ function main(): void {
     for (let seed = 0; seed < 200; seed++) {
       for (const key of sampleSchedule(model, { text: SAMPLES[5], wpm: 60, seed, errorRate: 0.2 })) {
         if (key.kind !== 'char') continue;
-        // A lone surrogate would reach the keyboard as a broken character.
+        // A lone surrogate types as a broken character.
         const code = key.ch.codePointAt(0) ?? 0;
         if (code >= 0xd800 && code <= 0xdfff) ok = false;
       }
@@ -124,7 +117,7 @@ function main(): void {
       backspaces += schedule.filter((key) => key.kind === 'backspace').length;
       characters += text.length;
     }
-    // Every mistake adds backspaces, so this runs above the raw error rate.
+    // Each mistake costs several backspaces, hence the wide bounds.
     const perChar = backspaces / characters;
     check(
       'backspaces per character',
@@ -163,7 +156,6 @@ function main(): void {
   if (failures) process.exit(1);
 }
 
-/** Renders a schedule as text, marking backspaces and long pauses. */
 function describe(schedule: Keystroke[]): string {
   let out = '';
   for (const key of schedule) {

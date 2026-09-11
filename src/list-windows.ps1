@@ -1,13 +1,6 @@
-<#
-  Lists the top-level windows a user could type into, as a JSON array of
-  { hwnd, pid, process, title }, sorted by process then title.
-
-  The filter mirrors what Alt+Tab shows: visible, titled, uncloaked windows
-  that are not tool windows or owned popups.
-#>
+# Emits a JSON array of { hwnd, pid, process, title }; the filter mirrors Alt+Tab.
 [CmdletBinding()]
 param(
-  # AutoTyper's own process, so the app cannot be picked as its own target.
   [int]$ExcludePid = 0
 )
 
@@ -55,7 +48,7 @@ public static class AutoTyperWindowList
     private const int WS_EX_NOACTIVATE = 0x08000000;
     private const int DWMWA_CLOAKED = 14;
 
-    /// <summary>True for the UWP placeholder windows that never come to the front.</summary>
+    // UWP placeholder windows that never come to the front.
     private static bool IsCloaked(IntPtr hWnd)
     {
         int cloaked;
@@ -63,7 +56,7 @@ public static class AutoTyperWindowList
         return cloaked != 0;
     }
 
-    /// <summary>One "hwnd\tpid\ttitle" record per window worth offering.</summary>
+    // Records are "hwnd\tpid\ttitle".
     public static string[] List(int excludePid)
     {
         List<string> found = new List<string>();
@@ -78,7 +71,7 @@ public static class AutoTyperWindowList
             int exStyle = GetWindowLong(hWnd, GWL_EXSTYLE);
             if ((exStyle & WS_EX_TOOLWINDOW) != 0) return true;
             if ((exStyle & WS_EX_NOACTIVATE) != 0) return true;
-            // Owned popups belong to another window; only promoted ones stand alone.
+            // Owned popups only count when promoted to app windows.
             if (GetWindow(hWnd, GW_OWNER) != IntPtr.Zero && (exStyle & WS_EX_APPWINDOW) == 0) return true;
             if (IsCloaked(hWnd)) return true;
 
@@ -128,8 +121,7 @@ foreach ($record in [AutoTyperWindowList]::List($ExcludePid)) {
 
 $windows = @($windows | Sort-Object process, title)
 
-# -Compress keeps the payload to one line. ConvertTo-Json drops the brackets for
-# a single object and for none at all, so both of those are written by hand.
+# ConvertTo-Json drops the array brackets for zero or one item.
 if ($windows.Count -eq 0) {
   [Console]::Out.Write('[]')
 }

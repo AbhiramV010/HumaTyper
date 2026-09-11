@@ -11,7 +11,6 @@ import { TypingModel } from './src/model/types';
 
 const IS_WINDOWS = process.platform === 'win32';
 
-/** Virtual key codes for the keys that are sent as keys rather than characters. */
 const VK_BACK = 8;
 const VK_TAB = 9;
 const VK_RETURN = 13;
@@ -22,9 +21,8 @@ interface Settings {
   wpm: number;
   delayMs: number;
   jitterPct: number;
-  /** Draw timings from the fitted human typing model rather than a flat delay. */
   humanize: boolean;
-  /** Typing mistakes per hundred characters; every one of them gets corrected. */
+  /** Per hundred characters. */
   errorPct: number;
   startDelaySec: number;
   lineDelayMs: number;
@@ -34,13 +32,12 @@ interface Settings {
   alwaysOnTop: boolean;
   startHotkey: string;
   stopHotkey: string;
-  /** Last picked target, remembered by name because handles die with the window. */
+  /** Stored by name; window handles don't survive restarts. */
   targetTitle: string;
   targetProcess: string;
 }
 
 interface StartOptions extends Partial<Settings> {
-  /** Handle of the window to type into, from the picker in the renderer. */
   targetHwnd?: number;
 }
 
@@ -76,7 +73,7 @@ const DEFAULT_SETTINGS: Settings = {
   delayMs: 40,
   jitterPct: 15,
   humanize: true,
-  // Replaced on load with the rate fitted from the dataset.
+  // Overridden by the model's fitted rate.
   errorPct: 3,
   startDelaySec: 3,
   lineDelayMs: 0,
@@ -92,7 +89,6 @@ const DEFAULT_SETTINGS: Settings = {
 
 let cachedModel: TypingModel | null = null;
 
-/** Fitted 136M-Keystrokes model, read from disk as asar-safe data, then cached. */
 function typingModel(): TypingModel {
   if (!cachedModel) {
     const file = path.join(__dirname, 'src', 'model', 'typing-model.json');
@@ -106,7 +102,7 @@ function defaultSettings(): Settings {
   try {
     errorPct = Math.round(typingModel().errors.rate * 1000) / 10;
   } catch {
-    /* fall back to the literal default if the model is missing */
+    /* model missing */
   }
   return { ...DEFAULT_SETTINGS, errorPct };
 }
@@ -134,7 +130,7 @@ function send(channel: string, payload?: unknown): void {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 }
 
-/** Scripts must sit on disk; powershell cannot read an asar. */
+/** PowerShell can't read scripts inside the asar. */
 function scriptPath(name: string): string {
   const source = path.join(__dirname, 'src', `${name}.ps1`);
   const target = path.join(os.tmpdir(), `autotyper-${name}-${app.getVersion()}.ps1`);
@@ -149,7 +145,6 @@ function scriptPath(name: string): string {
   return target;
 }
 
-/** Top-level windows the user could type into, newest listing each time. */
 function listWindows(): Promise<WindowInfo[]> {
   if (!IS_WINDOWS) return Promise.resolve([]);
 
@@ -163,7 +158,6 @@ function listWindows(): Promise<WindowInfo[]> {
           '-NonInteractive',
           '-ExecutionPolicy', 'Bypass',
           '-File', scriptPath('list-windows'),
-          // AutoTyper cannot be its own target.
           '-ExcludePid', String(process.pid),
         ],
         { windowsHide: true },
@@ -206,17 +200,15 @@ function cleanupRunFiles(): void {
   runFiles = null;
 }
 
-/** Delay between keystrokes, in milliseconds, derived from the UI settings. */
 function delayForOptions(options: StartOptions): number {
   if (options.speedMode === 'wpm') {
     const wpm = Math.max(1, Number(options.wpm) || DEFAULT_SETTINGS.wpm);
-    // Standard convention: one "word" is five characters.
+    // One "word" is five characters.
     return 60000 / (wpm * 5);
   }
   return Math.max(0, Number(options.delayMs) || 0);
 }
 
-/** Target speed in words per minute, whichever way the user expressed it. */
 function wpmForOptions(options: StartOptions): number {
   if (options.speedMode === 'delay') {
     const delayMs = Math.max(1, Number(options.delayMs) || 1);
@@ -225,7 +217,7 @@ function wpmForOptions(options: StartOptions): number {
   return Math.max(1, Number(options.wpm) || DEFAULT_SETTINGS.wpm);
 }
 
-/** Samples a whole run; each repetition differs so repeats give nothing away. */
+/** Resampled per pass so repeats aren't identical. */
 function buildSchedule(options: StartOptions): Keystroke[] {
   const model = typingModel();
   const text = String(options.text ?? '');
@@ -247,7 +239,7 @@ function buildSchedule(options: StartOptions): Keystroke[] {
   return keystrokes;
 }
 
-/** One step per line: delayUs,kind,value. See Invoke-Schedule in typer.ps1. */
+/** Lines of delayUs,kind,value; parsed by Invoke-Schedule in typer.ps1. */
 function serializeSchedule(schedule: Keystroke[]): string {
   const lines: string[] = [];
   for (const keystroke of schedule) {
@@ -301,7 +293,7 @@ function startTyping(options: StartOptions): { ok: boolean; error?: string } {
     try {
       fs.writeFileSync(runFiles.schedule, serializeSchedule(buildSchedule(options)), 'utf8');
     } catch (err) {
-      // A missing or unreadable model should cost the human rhythm, not the run.
+      // Degrade to an even pace rather than fail the run.
       console.error('Typing model unavailable, falling back to an even pace:', (err as Error).message);
       humanize = false;
     }
@@ -315,7 +307,7 @@ function startTyping(options: StartOptions): { ok: boolean; error?: string } {
     '-TextFile', runFiles.text,
     '-StopFile', runFiles.stop,
     '-TargetHwnd', String(targetHwnd),
-    // Humanised mode: the schedule carries timings, so flat delays go unused.
+    // Carries its own timings, so the flat delay is ignored.
     ...(humanize ? ['-ScheduleFile', runFiles.schedule] : []),
     '-DelayUs', String(Math.round(delayForOptions(options) * 1000)),
     '-JitterPct', String(Math.round(Number(options.jitterPct) || 0)),
@@ -378,11 +370,11 @@ function startTyping(options: StartOptions): { ok: boolean; error?: string } {
 
 function stopTyping(): { ok: boolean } {
   if (!typer) return { ok: false };
-  // The flag lets the engine exit cleanly; killing it is the fallback.
+  // Stop flag exits cleanly; the kill is a fallback.
   try {
     if (runFiles) fs.writeFileSync(runFiles.stop, '');
   } catch {
-    /* fall through to the kill below */
+    /* the kill below still runs */
   }
   const doomed = typer;
   setTimeout(() => {
