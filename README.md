@@ -1,178 +1,61 @@
 # HumaTyper
 
-A desktop autotyper built with Electron. Paste text, pick a speed, and it replays that
-text as real keystrokes into a window you pick — editors, chat boxes, games,
-remote desktop sessions, forms that block pasting.
+Types your text into any window as real keystrokes, with timing and typos drawn from a
+model of real typists. Useful wherever pasting doesn't work: paste-blocking forms, remote
+desktops, chat boxes. Windows only.
 
 ![platform](https://img.shields.io/badge/platform-Windows-blue) ![license](https://img.shields.io/badge/license-MIT-green)
 
-## Running it
+## Install
 
-```sh
-npm install
-npm start
+```powershell
+irm https://github.com/AbhiramV010/HumaTyper/raw/main/install.ps1 | iex
 ```
 
-The first `npm start` downloads the Electron runtime (~235 MB) before the window
-appears; later starts are instant.
+Open a new terminal and run `humatype`. To uninstall, run the same script with `-Uninstall`:
+`& ([scriptblock]::Create((irm <url above>))) -Uninstall`. From source: `npm install && npm start`.
 
-## How to type something
+## Use
 
-1. Pick the **target window** from the list. **Refresh** re-reads the open windows;
-   the list also refreshes whenever you come back to HumaTyper.
-2. Paste your text into the big box.
-3. Set the speed — **words per minute** (5 characters = 1 word, the standard
-   convention) or a raw **delay per keystroke** in milliseconds.
-4. Press **Start typing**. HumaTyper counts down, brings your chosen window to the
-   front, and types into it. If the focus moves to another app mid-run, typing stops
-   rather than spilling keystrokes into it.
-5. Press **F6** to stop early, or **F7** as an emergency stop. Both work while
-   HumaTyper is in the background, and `Esc` stops it while the app is focused.
+1. Pick the target window, paste your text, and set the WPM and typos per 100 characters.
+2. Press **Start typing** or **F6**. After a 3-second countdown, HumaTyper raises the window and types.
+3. **F6**, **F7**, or **Esc** stops it. If focus leaves the target, typing stops on its own.
 
-## Options
-
-| Setting | What it does |
-| --- | --- |
-| Target window | The window the keystrokes go to. It is raised automatically when a run starts. |
-| Words per minute / Delay per keystroke | Typing speed, in whichever unit you prefer. |
-| Rhythm | Draws each interval from a model fitted to real typists instead of a fixed delay. See [Human typing](#human-typing). |
-| Typos | Mistakes per 100 characters. Every one is noticed and backspaced away, so the text still lands correct. |
-| Countdown before typing | Grace period before keys start flowing, so a run can still be called off. |
-| Extra pause per line | Added after each Enter, for editors that autocomplete or reindent. |
-| Repeat / Pause between repeats | Types the text several times over. |
-| Start / stop and emergency stop hotkeys | Click the box, press your combination. Registered globally. |
-| Minimize on start | Gets HumaTyper out of the way when a run begins. |
-| Keep on top | Pins the window above other apps. |
-
-Everything is saved automatically and restored next launch, including the text.
+Apps running as administrator need HumaTyper running as administrator too.
 
 ## How it works
 
-The UI is Electron. The keystrokes come from `src/typer.ps1`, a PowerShell script the
-main process spawns per run, which calls the Win32 `SendInput` API through a small
-inline C# shim.
+The Electron UI hands each run to `src/typer.ps1`, which injects keys through Win32
+`SendInput` as Unicode input. The target can't tell them from a real keyboard, and any
+character types correctly regardless of layout, emoji included.
 
-Two consequences worth knowing:
+Before a run, `src/model/sampler.ts` turns the text into a schedule of keystrokes and delays:
 
-- **Keys are synthesised at the OS input layer**, not posted to a specific window, so
-  the target application cannot tell them apart from a physical keyboard. Text is sent
-  with `KEYEVENTF_UNICODE` scan codes, so any character types correctly regardless of
-  your keyboard layout — accents, symbols, CJK, even emoji. Enter and Tab are sent as
-  real virtual-key presses so editors treat them as such.
-- **No native modules.** Nothing to compile, no `node-gyp`, no rebuild after an
-  Electron upgrade — which is what `robotjs` or `nut.js` would have cost here.
+- **Letter pairs** set each interval: `th` takes 0.67× the median gap, `e!` takes 3.87×. Unseen pairs fall back to character classes, then a global fit.
+- **Pace** is fixed per run, plus independent per-key variation. The data shows no drift within a run.
+- **Typos** come from a confusion matrix learned from real corrections (QWERTY neighbours as a fallback), with fitted pauses for noticing, backspacing and resuming. Every typo is fixed, so the final text always matches.
+- The whole schedule is scaled once, so the run hits your WPM with corrections included.
 
-Stopping writes a flag file the engine polls between keystrokes, so it stops mid-run
-without killing the process (with a `kill` 250 ms later as a fallback).
+Turn **Rhythm** off for an even pace instead.
 
-## Human typing
+## Training data
 
-With **Rhythm** on, timings are not invented — they come from a model fitted to the
-[136M Keystrokes dataset](https://userinterfaces.aalto.fi/136Mkeystrokes/), 2,000 sampled
-participants typing 26,399 sentences, about 1.1 million keystrokes.
+The model is fitted on the [136M Keystrokes dataset](https://userinterfaces.aalto.fi/136Mkeystrokes/).
+From 2,000 randomly sampled participants, 1,787 had enough data: 26,399 sentences, about
+1.1 million keystrokes. Their median pace is 160 ms per key (75 WPM), and they corrected
+3.1% of characters. Only aggregate statistics are committed (`src/model/typing-model.json`),
+never raw keystrokes.
 
-What the model captures:
-
-- **Letter pairs.** Every interval is conditioned on the pair of characters being typed,
-  because that is what dominates typing speed. `th` runs at 0.67× the median interval and
-  `he` at 0.73×, while reaching for shifted punctuation costs far more — `e!` is 3.9×.
-  Pairs with too little data back off to a character-class table (`lower>upper` is 2.99×,
-  which is the cost of the shift key falling out of the data on its own), then to a global
-  distribution.
-- **Hold durations** are fitted (about 104 ms) and kept in the model file, but deliberately
-  *not* replayed. Holding a key that long trips the Windows key-repeat delay, which
-  duplicates characters and makes a single backspace eat several of them. Every key is
-  pressed and released in one `SendInput` batch instead. Intervals are press-to-press, so
-  the timing is unaffected.
-- **Spread, but no drift.** Autocorrelation of the log interval turned out to be flat from
-  lag 1 to lag 10 (~0.29) rather than decaying, which means there is no gradual speeding up
-  or slowing down within a run to model — just a fixed pace per run plus variation that is
-  independent keystroke to keystroke. The model does that, instead of faking a trend that
-  the data does not show.
-- **Mistakes and corrections.** Which wrong key gets hit comes from a confusion matrix
-  recovered from the dataset's own corrections: replaying each participant's keystrokes
-  reconstructs their text buffer, and a backspace is the typist stating that what they just
-  typed was wrong, with the prompt sentence saying what it should have been. Characters with
-  no observed confusions fall back to a QWERTY-adjacency prior. How long the mistake goes
-  unnoticed, the pause before the first backspace, the rate of the backspaces, and the
-  hesitation on resuming are all fitted the same way.
-
-One deliberate departure from the data: real typists leave plenty of errors uncorrected,
-but an autotyper that emits wrong text is broken, so only the *timing* of corrections is
-taken from the data. Every injected mistake is always fixed, and `npm run model:verify`
-asserts that across seeds, speeds, and error rates up to 50% the replayed text still
-matches the input exactly.
-
-Your WPM setting stays in charge: the model supplies the shape of the distribution, and
-the whole schedule is scaled once so the run delivers the speed you asked for, measured
-against your original text — corrections included.
-
-### Rebuilding the model
-
-The committed model (`src/model/typing-model.json`, 63 KB) holds only fitted statistics;
-no raw keystrokes are redistributed. To refit it:
+To refit:
 
 ```sh
-npm run dataset:fetch -- --n 2000
+npm run dataset:fetch -- --n 2000   # range requests, not the 1.4 GB archive
 npm run model:train
-npm run model:verify
-npm run engine:verify
-```
-
-`dataset:fetch` reads the 1.4 GB archive's central directory over HTTP range requests and
-pulls only the participants it samples, so it transfers about 45 MB rather than the whole
-thing. It caches to `data/cache/` (gitignored), and re-running is incremental.
-
-`engine:verify` runs the real PowerShell engine in `-DryRun` mode, where keystrokes are
-reported instead of sent, and checks the engine reconstructs each test string exactly.
-
-## Things to know
-
-- **Windows only.** The UI runs anywhere; the typing engine is Win32-specific. On other
-  platforms the Start button is disabled and says so.
-- **Whatever has focus gets the keystrokes.** If you alt-tab mid-run, the rest of the
-  text lands in the new window. Stop first.
-- **Elevated targets need an elevated HumaTyper.** Windows blocks synthetic input from a
-  normal process into an app running as administrator; the engine reports this instead
-  of silently typing nothing.
-- On a normal finish, the window stays minimized if you minimized it on start — it only
-  pops back if the run failed, so it never steals focus out from under you.
-- Anti-cheat systems in online games generally detect and may penalise synthetic input.
-
-## Packaging a standalone .exe
-
-```sh
-npm run dist
-```
-
-Downloads `electron-builder` on demand and writes an installer plus a portable exe to
-`dist/`.
-
-## Layout
-
-```
-main.js                     Electron main process: window, IPC, engine lifecycle, hotkeys
-preload.js                  contextBridge API exposed to the renderer
-src/typer.ps1               SendInput typing engine (progress reported on stdout)
-src/model/types.ts          Shape of the fitted model
-src/model/sampler.ts        Text -> keystroke schedule, including typos and corrections
-src/model/typing-model.json The fitted model (committed)
-tools/zip-remote.ts         Read-only ZIP client over HTTP range requests
-tools/fetch-dataset.ts      Samples participants from the dataset archive
-tools/train-model.ts        Fits the model from cached participant logs
-tools/verify-model.ts       Checks the sampler: text always replays back exactly
-tools/verify-engine.ts      Checks the PowerShell engine against a real schedule
-renderer/                   UI: index.html, styles.css, renderer.js
+npm run model:verify                # replayed text must match the input exactly
 ```
 
 ## License
 
-MIT.
-
-The typing model is derived from the 136M Keystrokes dataset, which is free for
-non-commercial use with attribution:
-
-> Vivek Dhakal, Anna Maria Feit, Per Ola Kristensson, Antti Oulasvirta.
-> **Observations on Typing from 136 Million Keystrokes.**
-> In Proceedings of the 2018 CHI Conference on Human Factors in Computing Systems (CHI '18), ACM, 2018.
-> [doi:10.1145/3173574.3174220](https://doi.org/10.1145/3173574.3174220)
+MIT. The model derives from the 136M Keystrokes dataset, free for non-commercial use with
+attribution: Dhakal, Feit, Kristensson, Oulasvirta. *Observations on Typing from 136 Million
+Keystrokes.* CHI '18. [doi:10.1145/3173574.3174220](https://doi.org/10.1145/3173574.3174220)
