@@ -432,6 +432,23 @@ function createWindow(): void {
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.once('ready-to-show', () => win!.show());
 
+  // The default menu binds zoom-in to Ctrl+Shift+=, so plain Ctrl+= does nothing.
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown' || !(input.control || input.meta) || input.alt) return;
+    const contents = win!.webContents;
+    const level = contents.getZoomLevel();
+    if (input.key === '=' || input.key === '+') {
+      contents.setZoomLevel(Math.min(level + 0.5, 5));
+    } else if (input.key === '-' || input.key === '_') {
+      contents.setZoomLevel(Math.max(level - 0.5, -5));
+    } else if (input.key === '0') {
+      contents.setZoomLevel(0);
+    } else {
+      return;
+    }
+    event.preventDefault();
+  });
+
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };

@@ -1,5 +1,5 @@
 @echo off
-cd /d "C:\HumaTyper"
+cd /d "%~dp0"
 rem cmd can't hide its own window, so a throwaway VBS runs npm start hidden.
 echo Set WshShell = CreateObject("WScript.Shell") > launch.vbs
 echo WshShell.Run "cmd /c npm start", 0, False >> launch.vbs
